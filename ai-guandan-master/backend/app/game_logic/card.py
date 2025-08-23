@@ -113,28 +113,23 @@ class Card:
         """返回卡牌的哈希值，用于set和dict"""
         return hash((self.rank, self.suit))
     
-    def __lt__(self, other) -> bool:
-        """
-        比较两张牌的大小，用于排序
-        
-        排序规则：
-        1. 首先按牌面值排序
-        2. 牌面值相同时按花色排序（黑桃 < 红桃 < 方块 < 梅花）
-        """
-        if not isinstance(other, Card):
-            return NotImplemented
-        
-        # 首先按牌面值排序
-        if self.rank.order != other.rank.order:
-            return self.rank.order < other.rank.order
-        
-        # 王牌之间的比较
-        if self.rank in [Rank.SMALL_JOKER, Rank.BIG_JOKER]:
-            return False  # 王牌之间不需要进一步排序
-        
-        # 牌面值相同时按花色排序
-        suit_order = {Suit.SPADE: 1, Suit.HEART: 2, Suit.DIAMOND: 3, Suit.CLUB: 4}
-        return suit_order[self.suit] < suit_order[other.suit]
+    def __lt__(self, other):
+        """禁用小于比较操作，避免排序混淆"""
+        raise TypeError("Card对象不支持直接比较，请使用具体的比较逻辑")
+    
+    def __le__(self, other):
+        """禁用小于等于比较操作"""
+        raise TypeError("Card对象不支持直接比较，请使用具体的比较逻辑")
+    
+    def __gt__(self, other):
+        """禁用大于比较操作"""
+        raise TypeError("Card对象不支持直接比较，请使用具体的比较逻辑")
+    
+    def __ge__(self, other):
+        """禁用大于等于比较操作"""
+        raise TypeError("Card对象不支持直接比较，请使用具体的比较逻辑")
+    
+
     
     @classmethod
     def from_string(cls, card_str: str) -> 'Card':
@@ -184,21 +179,146 @@ class Card:
         
         return cls(rank, suit)
     
-    @property
     def is_joker(self) -> bool:
-        """判断是否为王牌"""
+        """判断是否为王牌（大王或小王）"""
         return self.rank in [Rank.SMALL_JOKER, Rank.BIG_JOKER]
+    
+    def is_big_joker(self) -> bool:
+        """判断是否为大王"""
+        return self.rank == Rank.BIG_JOKER
     
     @property
     def is_red(self) -> bool:
         """判断是否为红色牌（红桃或方块）"""
-        if self.is_joker:
+        if self.is_joker():
             return False
         return self.suit in [Suit.HEART, Suit.DIAMOND]
     
     @property
     def is_black(self) -> bool:
         """判断是否为黑色牌（黑桃或梅花）"""
-        if self.is_joker:
+        if self.is_joker():
             return False
         return self.suit in [Suit.SPADE, Suit.CLUB]
+    
+    @staticmethod
+    def _level_to_rank(level: int) -> Rank:
+        """
+        将级别数字转换为对应的Rank枚举
+        
+        Args:
+            level: 级别数字（2-14，其中11=J, 12=Q, 13=K, 14=A）
+            
+        Returns:
+            对应的Rank枚举
+        """
+        level_map = {
+            2: Rank.TWO, 3: Rank.THREE, 4: Rank.FOUR, 5: Rank.FIVE,
+            6: Rank.SIX, 7: Rank.SEVEN, 8: Rank.EIGHT, 9: Rank.NINE,
+            10: Rank.TEN, 11: Rank.JACK, 12: Rank.QUEEN, 13: Rank.KING, 14: Rank.ACE
+        }
+        if level not in level_map:
+            raise ValueError(f"无效的级别: {level}")
+        return level_map[level]
+    
+    def is_trump(self, level: int) -> bool:
+        """
+        判断该牌是否是级牌（当前打的级别）
+        
+        在掼蛋中，级牌是当前级别的所有牌（如打7时，所有的7都是级牌）
+        注意：王牌（大王、小王）不是级牌，王牌 > 级牌 > 普通牌
+        
+        Args:
+            level: 当前打的级别（2-14）
+            
+        Returns:
+            True如果是级牌，False否则
+        """
+        # 王牌不是级牌
+        if self.is_joker():
+            return False
+        
+        # 检查是否为当前级别的牌
+        try:
+            trump_rank = self._level_to_rank(level)
+            return self.rank == trump_rank
+        except ValueError:
+            return False
+    
+    def is_wildcard(self, level: int) -> bool:
+        """
+        判断该牌是否是红桃级牌（"逢人配"万能牌）
+        
+        在掼蛋中，红桃级牌被称为"逢人配"，具有特殊规则：
+        1. 单打时：就是自己本身（红桃级牌）
+        2. 与其他牌一起出时：可以代替任何牌来组成牌型
+        3. 限制：无法变成王牌
+        
+        例如：打7时，红桃7是逢人配
+        
+        Args:
+            level: 当前打的级别（2-14）
+            
+        Returns:
+            True如果是红桃级牌，False否则
+        """
+        # 王牌不是逢人配
+        if self.is_joker():
+            return False
+        
+        # 必须是红桃花色且是当前级别
+        try:
+            trump_rank = self._level_to_rank(level)
+            return self.suit == Suit.HEART and self.rank == trump_rank
+        except ValueError:
+            return False
+    
+    def get_card_power(self, level: int) -> int:
+        """
+        获取牌的力量值，用于比较大小
+        
+        返回值越大表示牌力越强：
+        - 王牌：1000+ (大王 > 小王)
+        - 级牌：500+ (按rank.order排序)
+        - 普通牌：按rank.order排序
+        
+        Args:
+            level: 当前打的级别
+            
+        Returns:
+            牌的力量值
+        """
+        if self.is_joker():
+            # 王牌最大
+            if self.rank == Rank.BIG_JOKER:
+                return 1001
+            else:  # SMALL_JOKER
+                return 1000
+        elif self.is_trump(level):
+            # 级牌次之
+            return 500 + self.rank.order
+        else:
+            # 普通牌最小
+            return self.rank.order
+    
+    def can_substitute_as(self, target_card: 'Card', level: int) -> bool:
+        """
+        判断这张牌是否可以代替目标牌（逢人配功能）
+        
+        Args:
+            target_card: 目标牌
+            level: 当前级别
+            
+        Returns:
+            True如果可以代替，False否则
+        """
+        # 只有逢人配可以代替其他牌
+        if not self.is_wildcard(level):
+            return False
+        
+        # 逢人配无法变成王牌
+        if target_card.is_joker():
+            return False
+        
+        # 可以代替任何非王牌
+        return True
