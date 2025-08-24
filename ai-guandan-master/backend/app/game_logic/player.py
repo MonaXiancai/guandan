@@ -6,7 +6,7 @@
 
 from typing import List, Optional
 from enum import Enum
-from .card import Card
+from .card import Card, Rank
 
 
 class PlayerType(Enum):
@@ -46,22 +46,24 @@ class Player:
         self.is_finished = False
         self.rank = "2"  # 掼蛋等级，从2开始
     
-    def add_cards(self, cards: List[Card]):
+    def add_cards(self, cards: List[Card], level: int = 2):
         """
         向玩家手牌添加卡牌
         
         Args:
             cards: 要添加的卡牌列表
+            level: 当前级别，用于排序时判断级牌
         """
         self.hand.extend(cards)
-        self._sort_hand()
+        self._sort_hand(level)
     
-    def remove_cards(self, cards: List[Card]) -> bool:
+    def remove_cards(self, cards: List[Card], level: int = 2) -> bool:
         """
         从玩家手牌中移除卡牌
         
         Args:
             cards: 要移除的卡牌列表
+            level: 当前级别，用于排序时判断级牌
             
         Returns:
             True如果成功移除所有卡牌，否则False
@@ -82,6 +84,9 @@ class Player:
         # 检查是否出完牌
         if len(self.hand) == 0:
             self.is_finished = True
+        
+        # 重新排序手牌
+        self._sort_hand(level)
         
         return True
     
@@ -128,9 +133,32 @@ class Player:
         self.hand.clear()
         self.is_finished = False
     
-    def _sort_hand(self):
+    def _sort_hand(self, level: int = 2):
         """对手牌进行排序"""
-        self.hand.sort()
+        # 使用牌力值进行排序，而不是直接比较Card对象
+        self.hand.sort(key=lambda card: self._get_card_value_for_sorting(card, level))
+    
+    def _get_card_value_for_sorting(self, card, level: int = 2) -> int:
+        """
+        获取牌的价值用于排序
+        
+        Args:
+            card: 卡牌对象
+            level: 当前级别，用于判断级牌
+            
+        Returns:
+            牌的价值（越大越重要）
+        """
+        # 使用Rank枚举中已有的order属性
+        base_value = card.rank.order
+        
+        # 级牌大于普通牌（但小于王牌）
+        if card.rank.value == str(level) and card.rank not in [Rank.SMALL_JOKER, Rank.BIG_JOKER]:
+            # 级牌在普通牌中最大，但小于王牌
+            # 王牌的order是16和17，级牌应该小于这个值
+            return 15  # 级牌值设为15，介于ACE(14)和王牌(16,17)之间
+        
+        return base_value
     
     def is_human(self) -> bool:
         """判断是否为人类玩家"""

@@ -57,8 +57,8 @@ class Rank(Enum):
             Rank.QUEEN: 12,
             Rank.KING: 13,
             Rank.ACE: 14,
-            Rank.SMALL_JOKER: 15,
-            Rank.BIG_JOKER: 16
+            Rank.SMALL_JOKER: 16,
+            Rank.BIG_JOKER: 17
         }
         return order_map[self]
 

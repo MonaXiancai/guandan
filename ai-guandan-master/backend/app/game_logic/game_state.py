@@ -15,8 +15,9 @@ class GamePhase(Enum):
     """游戏阶段枚举"""
     WAITING = "waiting"          # 等待玩家
     DEALING = "dealing"          # 发牌阶段
+    TRIBUTING = "tributing"      # 进贡阶段
     PLAYING = "playing"          # 游戏进行中
-    ROUND_END = "round_end"      # 一轮结束
+    ROUND_OVER = "round_over"    # 一轮结束
     GAME_END = "game_end"        # 游戏结束
 
 

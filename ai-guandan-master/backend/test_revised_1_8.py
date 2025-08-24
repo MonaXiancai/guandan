@@ -98,7 +98,7 @@ def test_specific_hands():
     
     # 4张10: 炸弹 - 2张逢人配 + 2张3
     cards10 = [Card(Rank.SEVEN, Suit.HEART), Card(Rank.SEVEN, Suit.HEART),
-                Card(Rank.THREE, Suit.HEART), Card(Rank.THREE, Suit.SPADE)]
+                Card(Rank.SMALL_JOKER), Card(Rank.SMALL_JOKER)]
     print(f"4张10: {[str(card) for card in cards10]}")
     result10 = parse_hand(cards10, level)
     for hand in result10:

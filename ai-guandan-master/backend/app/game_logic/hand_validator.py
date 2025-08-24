@@ -714,7 +714,9 @@ def _parse_bomb(cards: List[Card], level: int = 2) -> Optional[HandInfo]:
     
     wildcards = _get_wildcards(cards, level)
     non_wildcards = _get_non_wildcards(cards, level)
-    
+
+    if any(card.is_joker() for card in non_wildcards):
+        return None
     # 没有逢人配的情况
     if not wildcards:
         rank_counts = _get_rank_counts(cards)
@@ -819,13 +821,14 @@ def parse_hand(cards: List[Card], level: int = 2) -> List[HandInfo]:
     return possible_hands
 
 
-def get_best_hand_for_comparison(possible_hands: List[HandInfo], target_hand_type: HandType) -> Optional[HandInfo]:
+def get_best_hand_for_comparison(possible_hands: List[HandInfo], target_hand_type: HandType, level: int = 2) -> Optional[HandInfo]:
     """
-    从多个可能的牌型中选择最适合与目标牌型比较的牌型
+    从多个可能的牌型中选择最适合与目标牌型比较的牌型，支持级牌最大
     
     Args:
         possible_hands: 所有可能的牌型
         target_hand_type: 目标牌型（要比较的牌型）
+        level: 当前级别，用于判断级牌
         
     Returns:
         最适合比较的牌型，如果没有可比较的牌型则返回None
@@ -836,8 +839,8 @@ def get_best_hand_for_comparison(possible_hands: List[HandInfo], target_hand_typ
     # 首先尝试找到相同类型的牌型
     same_type_hands = [hand for hand in possible_hands if hand.hand_type == target_hand_type]
     if same_type_hands:
-        # 如果有多个相同类型，选择最大的
-        return max(same_type_hands, key=lambda h: (h.primary_rank.order if h.primary_rank else 0))
+        # 如果有多个相同类型，选择最大的（考虑级牌）
+        return max(same_type_hands, key=lambda h: _get_rank_value_for_comparison(h.primary_rank, level))
     
     # 如果没有相同类型，检查是否有特殊牌型（炸弹、同花顺）可以压制
     special_hands = [hand for hand in possible_hands if hand.hand_type in [
@@ -850,6 +853,35 @@ def get_best_hand_for_comparison(possible_hands: List[HandInfo], target_hand_typ
         return max(special_hands, key=get_hand_strength)
     
     return None
+
+
+def _get_rank_value_for_comparison(rank: Optional[Rank], level: int) -> int:
+    """
+    获取牌面值用于比较，支持级牌大于普通牌小于王牌
+    
+    Args:
+        rank: 牌面值
+        level: 当前级别
+        
+    Returns:
+        用于比较的数值，越大表示越强
+    """
+    if not rank:
+        return 0
+    
+    # 王牌最大
+    if rank in [Rank.SMALL_JOKER, Rank.BIG_JOKER]:
+        if rank == Rank.BIG_JOKER:
+            return 2000  # 大王最大
+        else:
+            return 1500  # 小王次之
+    
+    # 级牌大于普通牌（但小于王牌）
+    if rank.value == str(level):
+        return 1000 + rank.order
+    
+    # 普通牌按正常顺序
+    return rank.order
 
 
 def is_valid_hand(cards: List[Card], level: int = 2) -> bool:
@@ -927,13 +959,14 @@ def is_ace_low_straight(hand_info: HandInfo) -> bool:
     return Rank.ACE in ranks and Rank.TWO in ranks
 
 
-def _compare_same_hand_type(new_hand: HandInfo, last_hand: HandInfo) -> bool:
+def _compare_same_hand_type(new_hand: HandInfo, last_hand: HandInfo, level: int = 2) -> bool:
     """
-    比较相同牌型的大小
+    比较相同牌型的大小，支持级牌最大
     
     Args:
         new_hand: 新出的牌型信息
         last_hand: 上一手牌型信息
+        level: 当前级别，用于判断级牌
         
     Returns:
         True如果新牌能大过上一手牌，否则False
@@ -960,22 +993,50 @@ def _compare_same_hand_type(new_hand: HandInfo, last_hand: HandInfo) -> bool:
             return True
         else:
             # 都是A开头或都不是A开头，比较主要牌面值
-            return new_hand.primary_rank.order > last_hand.primary_rank.order
+            return _compare_rank_with_level(new_hand.primary_rank, last_hand.primary_rank, level)
     
     # 对于三带二，主要比较三张的牌面值
     if new_hand.hand_type == HandType.TRIO_WITH_PAIR:
-        return new_hand.primary_rank.order > last_hand.primary_rank.order
+        return _compare_rank_with_level(new_hand.primary_rank, last_hand.primary_rank, level)
     
-    # 对于炸弹，比较牌面值
+    # 对于炸弹，比较牌面值（级牌炸弹大于普通炸弹）
     if new_hand.hand_type in [HandType.BOMB_4, HandType.BOMB_5, HandType.BOMB_6, 
                               HandType.BOMB_7, HandType.BOMB_8]:
-        return new_hand.primary_rank.order > last_hand.primary_rank.order
+        return _compare_rank_with_level(new_hand.primary_rank, last_hand.primary_rank, level)
     
     # 对于其他牌型（单牌、对子、三张），比较主要牌面值
     if new_hand.primary_rank and last_hand.primary_rank:
-        return new_hand.primary_rank.order > last_hand.primary_rank.order
+        return _compare_rank_with_level(new_hand.primary_rank, last_hand.primary_rank, level)
     
     return False
+
+
+def _compare_rank_with_level(rank1: Rank, rank2: Rank, level: int) -> bool:
+    """
+    比较两个牌面值的大小，支持级牌大于普通牌小于王牌
+    
+    Args:
+        rank1: 第一个牌面值
+        rank2: 第二个牌面值
+        level: 当前级别
+        
+    Returns:
+        True如果rank1大于rank2，否则False
+    """
+    # 王牌最大
+    if rank1 in [Rank.SMALL_JOKER, Rank.BIG_JOKER] and rank2 not in [Rank.SMALL_JOKER, Rank.BIG_JOKER]:
+        return True
+    if rank1 not in [Rank.SMALL_JOKER, Rank.BIG_JOKER] and rank2 in [Rank.SMALL_JOKER, Rank.BIG_JOKER]:
+        return False
+    
+    # 级牌大于普通牌（但小于王牌）
+    if rank1.value == str(level) and rank2.value != str(level) and rank2 not in [Rank.SMALL_JOKER, Rank.BIG_JOKER]:
+        return True
+    if rank1.value != str(level) and rank2.value == str(level) and rank1 not in [Rank.SMALL_JOKER, Rank.BIG_JOKER]:
+        return False
+    
+    # 如果都是级牌或都不是级牌，按正常顺序比较
+    return rank1.order > rank2.order
 
 
 def is_valid_play(new_hand: List[Card], last_hand: List[Card], level: int = 2) -> bool:
@@ -1020,7 +1081,7 @@ def is_valid_play(new_hand: List[Card], last_hand: List[Card], level: int = 2) -
     last_hand_info = max(last_possible_hands, key=get_hand_strength)
     
     # 尝试找到能击败上一手牌的最佳牌型
-    best_new_hand = get_best_hand_for_comparison(new_possible_hands, last_hand_info.hand_type)
+    best_new_hand = get_best_hand_for_comparison(new_possible_hands, last_hand_info.hand_type, level)
     
     if not best_new_hand:
         return False
@@ -1042,7 +1103,7 @@ def is_valid_play(new_hand: List[Card], last_hand: List[Card], level: int = 2) -
             return new_strength > last_strength
         else:
             # 相同强度，比较具体值
-            return _compare_same_hand_type(best_new_hand, last_hand_info)
+            return _compare_same_hand_type(best_new_hand, last_hand_info, level)
     
     # 如果新牌是特殊牌型，上一手不是，新牌获胜
     elif is_new_special and not is_last_special:
@@ -1058,7 +1119,7 @@ def is_valid_play(new_hand: List[Card], last_hand: List[Card], level: int = 2) -
             return False
         
         # 相同牌型，进一步比较
-        return _compare_same_hand_type(best_new_hand, last_hand_info)
+        return _compare_same_hand_type(best_new_hand, last_hand_info, level)
 
 
 def can_beat_hand(new_hand: List[Card], last_hand: List[Card], level: int = 2) -> bool:
