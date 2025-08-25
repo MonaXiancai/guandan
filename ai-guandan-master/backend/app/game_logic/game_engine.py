@@ -77,10 +77,11 @@ class GameEngine:
         deck = Deck()
         deck.shuffle()
         
-        # 每人13张牌
+        # 掼蛋：每人27张牌，总共108张（两副牌）
+        # 使用前108张牌，每人27张
         for i, player in enumerate(players):
-            start_index = i * 13
-            end_index = start_index + 13
+            start_index = i * 27
+            end_index = start_index + 27
             player_cards = deck.cards[start_index:end_index]
             player.add_cards(player_cards, level=current_level)
         
@@ -667,15 +668,12 @@ class GameEngine:
         Args:
             game_state: 游戏状态
         """
-        # 找到下一个未完成游戏的玩家
+        # 简单移动到下一个玩家
         next_index = (game_state.current_turn_index + 1) % 4
-        while len(game_state.players[next_index].hand) == 0:
-            next_index = (next_index + 1) % 4
-            # 防止无限循环
-            if next_index == game_state.current_turn_index:
-                break
-        
         game_state.current_turn_index = next_index
+        
+        # 记录回合转移
+        print(f"DEBUG: Turn moved from player_{game_state.current_turn_index + 1} to player_{next_index + 1}")
     
     def _end_round(self, game_state: GameState):
         """
