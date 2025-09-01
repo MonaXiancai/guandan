@@ -45,16 +45,25 @@ class ConnectionManager:
             client_id: 客户端唯一标识
         """
         if client_id in self.active_connections:
+            # 获取玩家ID（如果已注册）
+            player_id = None
+            if client_id in self.client_to_player:
+                player_id = self.client_to_player[client_id]
+            
+            # 清理连接
             del self.active_connections[client_id]
             
             # 清理映射关系
-            if client_id in self.client_to_player:
-                player_id = self.client_to_player[client_id]
+            if player_id:
                 del self.client_to_player[client_id]
                 if player_id in self.player_to_client:
                     del self.player_to_client[player_id]
             
             logger.info(f"Client {client_id} disconnected")
+            
+            # 检查是否需要结束游戏
+            if player_id and self._should_end_game():
+                self._end_game_due_to_disconnection(player_id)
     
     def register_player(self, client_id: str, player_id: str):
         """
@@ -230,6 +239,94 @@ class ConnectionManager:
                 "player_id": player_id
             })
         return players_info
+    
+    def get_last_played_hand(self):
+        """获取上家最后出的牌"""
+        game_state = self.get_game_state()
+        if game_state and hasattr(game_state, 'last_played_hand'):
+            # 转换为字符串列表，避免JSON序列化问题
+            return [str(card) for card in game_state.last_played_hand] if game_state.last_played_hand else []
+        return []
+
+    def _should_end_game(self) -> bool:
+        """
+        检查是否应该结束游戏
+        
+        Returns:
+            True如果应该结束游戏，否则False
+        """
+        # 如果有游戏ID且连接数少于4个，说明有玩家断线
+        return (self.get_game_id() is not None and 
+                len(self.active_connections) < 4)
+    
+    def _end_game_due_to_disconnection(self, disconnected_player_id: str):
+        """
+        由于玩家断线而结束游戏
+        
+        Args:
+            disconnected_player_id: 断线的玩家ID
+        """
+        try:
+            # 获取游戏状态
+            game_state = self.get_game_state()
+            if not game_state:
+                logger.warning("No game state available for ending game")
+                return
+            
+            # 广播游戏结束消息
+            import asyncio
+            asyncio.create_task(self._broadcast_game_end(disconnected_player_id))
+            
+            # 清理游戏状态
+            self._cleanup_game_state()
+            
+            logger.info(f"Game ended due to player {disconnected_player_id} disconnection")
+            
+        except Exception as e:
+            logger.error(f"Error ending game due to disconnection: {e}")
+    
+    async def _broadcast_game_end(self, disconnected_player_id: str):
+        """
+        广播游戏结束消息
+        
+        Args:
+            disconnected_player_id: 断线的玩家ID
+        """
+        try:
+            # 向所有剩余连接的客户端广播游戏结束消息
+            await self.broadcast({
+                "type": "GAME_ENDED",
+                "reason": "player_disconnected",
+                "disconnected_player_id": disconnected_player_id,
+                "message": f"Game ended because player {disconnected_player_id} disconnected"
+            })
+            
+            logger.info(f"Game end message broadcasted due to player {disconnected_player_id} disconnection")
+            
+        except Exception as e:
+            logger.error(f"Error broadcasting game end message: {e}")
+    
+    def _cleanup_game_state(self):
+        """
+        清理游戏状态
+        """
+        try:
+            # 获取当前游戏ID
+            game_id = self.get_game_id()
+            if game_id:
+                # 从游戏引擎中移除游戏
+                from app.main import game_engine
+                if game_engine.remove_game(game_id):
+                    logger.info(f"Successfully removed game {game_id} from game engine")
+                else:
+                    logger.warning(f"Failed to remove game {game_id} from game engine")
+                
+                # 清除连接管理器中的游戏ID
+                self._game_id = None
+                logger.info(f"Cleaned up game state for game {game_id}")
+            
+        except Exception as e:
+            logger.error(f"Error cleaning up game state: {e}")
 
 # 全局连接管理器实例
 connection_manager = ConnectionManager()
@@ -397,13 +494,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
         
         logger.info(f"Client {client_id} connected successfully, current connections: {connection_manager.get_connection_count()}")
         
-        # 检查是否应该开始游戏
-        if connection_manager.should_start_game():
-            logger.info("4 players connected and registered, starting new game...")
-            game_id = await start_new_game()
-            if game_id:
-                # 广播游戏状态
-                await broadcast_game_state()
+        # 游戏启动检查移到玩家注册后，这里不需要检查
         
         # 消息处理循环
         try:
@@ -471,8 +562,9 @@ async def handle_client_message(client_id: str, message: dict):
                 logger.info("4 players registered, starting new game...")
                 game_id = await start_new_game()
                 if game_id:
-                    # 广播游戏状态
-                    await broadcast_game_state()
+                    # 然后广播游戏状态更新（异步执行，不阻塞当前响应）
+                    import asyncio
+                    asyncio.create_task(broadcast_game_state())
                 else:
                     logger.error("Failed to start new game, cannot broadcast game state")
     
@@ -538,16 +630,17 @@ async def handle_client_message(client_id: str, message: dict):
             result = game_engine.process_player_action(game_id, player_id, "play_cards", cards)
             
             if result.get("success"):
-                # 出牌成功，广播游戏状态更新
-                await broadcast_game_state()
-                
-                # 发送出牌确认
+                # 先发送出牌确认给当前玩家
                 await connection_manager.send_personal_message({
                     "type": "PLAY_CARDS_SUCCESS",
                     "message": result.get("message", "Cards played successfully"),
                     "next_player_index": result.get("next_player_index"),
                     "player_finished": result.get("player_finished", False)
                 }, client_id)
+                
+                # 然后异步广播游戏状态更新（不阻塞当前响应）
+                import asyncio
+                asyncio.create_task(broadcast_game_state())
                 
                 # 如果玩家出完牌，广播特殊消息
                 if result.get("player_finished"):
@@ -557,10 +650,21 @@ async def handle_client_message(client_id: str, message: dict):
                         "message": f"Player {player_id} has finished the round!"
                     })
             else:
-                # 出牌失败
+                # 出牌失败，需要重新选择
+                error_message = result.get("error", "Failed to play cards")
+                last_hand = connection_manager.get_last_played_hand()
+                
+                # 构建更详细的错误信息
+                if last_hand:
+                    error_details = f"{error_message} 上家出牌：{[str(card) for card in last_hand]}"
+                else:
+                    error_details = error_message
+                
                 await connection_manager.send_personal_message({
                     "type": "PLAY_CARDS_ERROR",
-                    "message": result.get("error", "Failed to play cards")
+                    "message": error_details,
+                    "requires_reselection": True,  # 标记需要重新选择
+                    "last_played_hand": last_hand  # 提供上家出牌信息
                 }, client_id)
                 
         except Exception as e:
@@ -593,16 +697,17 @@ async def handle_client_message(client_id: str, message: dict):
         result = game_engine.process_player_action(game_id, player_id, "pass")
         
         if result.get("success"):
-            # 过牌成功，广播游戏状态更新
-            await broadcast_game_state()
-            
-            # 发送过牌确认
+            # 先发送过牌确认给当前玩家
             await connection_manager.send_personal_message({
                 "type": "PASS_TURN_SUCCESS",
                 "message": result.get("message", "Turn passed successfully"),
                 "next_player_index": result.get("next_player_index"),
                 "pass_count": result.get("pass_count", 0)
             }, client_id)
+            
+            # 然后异步广播游戏状态更新（不阻塞当前响应）
+            import asyncio
+            asyncio.create_task(broadcast_game_state())
         else:
             # 过牌失败
             await connection_manager.send_personal_message({

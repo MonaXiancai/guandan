@@ -12,6 +12,7 @@ from .game_state import GameState, GamePhase, TurnAction
 from .player import Player
 from .card import Card, Rank, Suit
 from .deck import Deck
+from .hand_validator import is_valid_play, parse_hand
 
 
 class TributeInfo:
@@ -593,8 +594,18 @@ class GameEngine:
             if not current_player.has_cards(cards):
                 return {"success": False, "error": "玩家没有这些牌"}
             
-            # 检查出牌是否合法（这里需要调用hand_validator）
-            # 暂时跳过验证，直接执行出牌
+            # 检查出牌是否合法（调用hand_validator）
+            # 验证牌型是否有效
+            if not parse_hand(cards, game_state.current_level):
+                return {"success": False, "error": "无效的牌型"}
+            
+            # 检查是否能大过上家（如果有上家出牌的话）
+            if game_state.last_played_hand and game_state.last_player_id != player_id:
+                if not is_valid_play(cards, game_state.last_played_hand, game_state.current_level):
+                    return {
+                        "success": False, 
+                        "error": f"出牌不能大过上家，请重新选择。上家出牌：{[str(card) for card in game_state.last_played_hand]}"
+                    }
             
             # 从玩家手牌中移除牌
             current_player.remove_cards(cards, game_state.current_level)
@@ -668,12 +679,15 @@ class GameEngine:
         Args:
             game_state: 游戏状态
         """
+        # 记录当前玩家索引（在更新之前）
+        current_index = game_state.current_turn_index
+        
         # 简单移动到下一个玩家
-        next_index = (game_state.current_turn_index + 1) % 4
+        next_index = (current_index + 1) % 4
         game_state.current_turn_index = next_index
         
         # 记录回合转移
-        print(f"DEBUG: Turn moved from player_{game_state.current_turn_index + 1} to player_{next_index + 1}")
+        print(f"DEBUG: Turn moved from player_{current_index + 1} to player_{next_index + 1}")
     
     def _end_round(self, game_state: GameState):
         """

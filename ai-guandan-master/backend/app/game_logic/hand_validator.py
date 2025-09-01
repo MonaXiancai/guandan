@@ -1136,39 +1136,3 @@ def can_beat_hand(new_hand: List[Card], last_hand: List[Card], level: int = 2) -
     return is_valid_play(new_hand, last_hand, level)
 
 
-def get_playable_combinations(hand_cards: List[Card], last_hand: List[Card], level: int = 2) -> List[List[Card]]:
-    """
-    获取从手牌中能够大过上一手牌的所有可能组合
-    
-    这是一个辅助函数，可以用于AI决策或提示玩家可出的牌
-    
-    Args:
-        hand_cards: 手牌列表
-        last_hand: 上一手牌列表
-        
-    Returns:
-        所有能够大过上一手牌的牌组合列表
-    """
-    from itertools import combinations
-    
-    playable_combinations = []
-    
-    # 如果上一手为空，返回所有有效牌型
-    if not last_hand:
-        # 这里只返回一些基本的单牌组合作为示例
-        # 实际实现中可能需要更复杂的逻辑来生成所有可能的牌型
-        for card in hand_cards:
-            if is_valid_hand([card], level):
-                playable_combinations.append([card])
-        return playable_combinations
-    
-    # 尝试所有可能的牌组合
-    max_combo_size = min(len(hand_cards), 13)  # 限制最大组合大小避免性能问题
-    
-    for combo_size in range(1, max_combo_size + 1):
-        for combo in combinations(hand_cards, combo_size):
-            combo_list = list(combo)
-            if is_valid_play(combo_list, last_hand, level):
-                playable_combinations.append(combo_list)
-    
-    return playable_combinations
